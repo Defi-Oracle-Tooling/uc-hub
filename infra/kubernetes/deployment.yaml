@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: uc-hub-backend
+  labels:
+    app: uc-hub
+    tier: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: uc-hub
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: uc-hub
+        tier: backend
+    spec:
+      containers:
+      - name: uc-hub-backend
+        image: uc-hub/backend:latest
+        resources:
+          limits:
+            cpu: "1"
+            memory: "1Gi"
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+        ports:
+        - containerPort: 4000
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "4000"
+        - name: MONGODB_URI
+          valueFrom:
+            secretKeyRef:
+              name: uc-hub-secrets
+              key: mongodb-uri
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: uc-hub-secrets
+              key: jwt-secret
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 4000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: uc-hub-frontend
+  labels:
+    app: uc-hub
+    tier: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: uc-hub
+      tier: frontend
+  template:
+    metadata:
+      labels:
+        app: uc-hub
+        tier: frontend
+    spec:
+      containers:
+      - name: uc-hub-frontend
+        image: uc-hub/frontend:latest
+        resources:
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+        ports:
+        - containerPort: 80
+        env:
+        - name: REACT_APP_API_URL
+          value: "https://api.uc-hub.com/graphql"
