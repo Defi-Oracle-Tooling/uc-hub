@@ -1,9 +1,13 @@
 const { PubSub, withFilter } = require('graphql-subscriptions');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+const config = require('config');
 const { UserInputError, AuthenticationError } = require('apollo-server-express');
 const mongoose = require('mongoose');
 const User = require('./models/User');
 const Message = require('./models/Message');
 const Meeting = require('./models/Meeting');
+const Conversation = require('./models/Conversation');
 const { ERROR_TYPES, createGraphQLError } = require('./utils/errorHandler');
 
 // Create PubSub instance for handling subscriptions
@@ -16,7 +20,28 @@ const EVENTS = {
   USER_PRESENCE_CHANGED: 'USER_PRESENCE_CHANGED',
   USER_TYPING: 'USER_TYPING',
   MEETING_UPDATED: 'MEETING_UPDATED',
-  MEETING_PARTICIPANT_JOINED: 'MEETING_PARTICIPANT_JOINED'
+  MEETING_PARTICIPANT_JOINED: 'MEETING_PARTICIPANT_JOINED',
+  MESSAGE_CREATED: 'MESSAGE_CREATED',
+  MESSAGE_DELETED: 'MESSAGE_DELETED',
+  USER_PRESENCE: 'USER_PRESENCE'
+};
+
+// Verify subscription authentication context
+const verifySubscriptionAuth = async (connectionParams) => {
+  if (!connectionParams.authToken) {
+    throw new AuthenticationError('Missing auth token');
+  }
+
+  try {
+    const decoded = jwt.verify(connectionParams.authToken, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id).select('-password');
+    if (!user) {
+      throw new Error('User not found');
+    }
+    return { user };
+  } catch (error) {
+    throw new AuthenticationError('Invalid auth token');
+  }
 };
 
 // Sample resolvers for UC-Hub GraphQL API
@@ -165,7 +190,38 @@ const resolvers = {
         throw createGraphQLError(`Error fetching meeting: ${error.message}`, 
           error.extensions?.code || ERROR_TYPES.INTERNAL);
       }
-    }
+    },
+    
+    me: async (_, __, { user }) => {
+      if (!user) throw new Error('Not authenticated');
+      return await User.findById(user.id);
+    },
+    users: async () => await User.find({}),
+    user: async (_, { id }) => await User.findById(id),
+    conversations: async (_, __, { user }) => {
+      if (!user) throw new Error('Not authenticated');
+      return await Conversation.find({ participants: user.id })
+        .populate('participants')
+        .populate('lastMessage');
+    },
+    conversation: async (_, { id }, { user }) => {
+      if (!user) throw new Error('Not authenticated');
+      return await Conversation.findById(id)
+        .populate('participants')
+        .populate({
+          path: 'messages',
+          populate: { path: 'sender' }
+        });
+    },
+    messages: async (_, { conversationId, limit = 50, offset = 0 }, { user }) => {
+      if (!user) throw new Error('Not authenticated');
+      return await Message.find({ conversationId })
+        .sort({ createdAt: -1 })
+        .skip(offset)
+        .limit(limit)
+        .populate('sender')
+        .populate('recipients');
+    },
   },
   
   Mutation: {
@@ -234,7 +290,7 @@ const resolvers = {
       }
     },
     
-    sendMessage: async (_, { content, conversationId, recipients, platform }, { user }) => {
+    sendMessage: async (_, { content, conversationId, recipients, platform }, { user, webSocketHandler }) => {
       if (!user) {
         throw createGraphQLError('Not authenticated', ERROR_TYPES.AUTHENTICATION);
       }
@@ -266,6 +322,22 @@ const resolvers = {
           newMessage: message,
           conversationId
         });
+
+        const populatedMessage = await message
+          .populate('sender')
+          .populate('recipients')
+          .execPopulate();
+
+        // Publish to GraphQL subscriptions
+        pubsub.publish(EVENTS.MESSAGE_CREATED, {
+          messageCreated: populatedMessage,
+          conversationId
+        });
+
+        // Notify via WebSocket
+        if (webSocketHandler) {
+          webSocketHandler.sendToConversation(conversationId, 'new_message', populatedMessage);
+        }
         
         return message;
       } catch (error) {
@@ -342,7 +414,66 @@ const resolvers = {
       } catch (error) {
         throw createGraphQLError(`Failed to schedule meeting: ${error.message}`, ERROR_TYPES.INTERNAL);
       }
-    }
+    },
+
+    updateMessage: async (_, { id, content }, { user, webSocketHandler }) => {
+      if (!user) throw new Error('Not authenticated');
+
+      const message = await Message.findById(id);
+      if (!message) throw new Error('Message not found');
+      if (message.sender.toString() !== user.id) throw new Error('Not authorized');
+
+      const updatedMessage = await Message.findByIdAndUpdate(
+        id,
+        { content, updatedAt: new Date() },
+        { new: true }
+      ).populate('sender').populate('recipients');
+
+      // Publish to GraphQL subscriptions
+      pubsub.publish(EVENTS.MESSAGE_UPDATED, {
+        messageUpdated: updatedMessage,
+        conversationId: message.conversationId
+      });
+
+      // Notify via WebSocket
+      if (webSocketHandler) {
+        webSocketHandler.sendToConversation(
+          message.conversationId,
+          'message_updated',
+          updatedMessage
+        );
+      }
+
+      return updatedMessage;
+    },
+
+    deleteMessage: async (_, { id }, { user, webSocketHandler }) => {
+      if (!user) throw new Error('Not authenticated');
+
+      const message = await Message.findById(id);
+      if (!message) throw new Error('Message not found');
+      if (message.sender.toString() !== user.id) throw new Error('Not authorized');
+
+      const conversationId = message.conversationId;
+      await Message.findByIdAndDelete(id);
+
+      // Publish to GraphQL subscriptions
+      pubsub.publish(EVENTS.MESSAGE_DELETED, {
+        messageDeleted: id,
+        conversationId
+      });
+
+      // Notify via WebSocket
+      if (webSocketHandler) {
+        webSocketHandler.sendToConversation(
+          conversationId,
+          'message_deleted',
+          { messageId: id }
+        );
+      }
+
+      return true;
+    },
   },
   
   Subscription: {
@@ -414,8 +545,166 @@ const resolvers = {
           );
         }
       )
+    },
+
+    messageCreated: {
+      subscribe: withFilter(
+        (_, args, context) => {
+          if (!context.user) {
+            throw new AuthenticationError('Not authenticated');
+          }
+          return pubsub.asyncIterator(EVENTS.MESSAGE_CREATED);
+        },
+        async (payload, variables, context) => {
+          try {
+            const conversation = await Conversation.findById(variables.conversationId);
+            if (!conversation) return false;
+
+            // Verify user is participant in conversation
+            return conversation.participants.some(
+              p => p.user.toString() === context.user.id.toString()
+            );
+          } catch (error) {
+            console.error('Subscription filter error:', error);
+            return false;
+          }
+        }
+      )
+    },
+
+    messageUpdated: {
+      subscribe: withFilter(
+        (_, args, context) => {
+          if (!context.user) {
+            throw new AuthenticationError('Not authenticated');
+          }
+          return pubsub.asyncIterator(EVENTS.MESSAGE_UPDATED);
+        },
+        async (payload, variables, context) => {
+          try {
+            const conversation = await Conversation.findById(variables.conversationId);
+            if (!conversation) return false;
+
+            return conversation.participants.some(
+              p => p.user.toString() === context.user.id.toString()
+            );
+          } catch (error) {
+            console.error('Subscription filter error:', error);
+            return false;
+          }
+        }
+      )
+    },
+
+    messageDeleted: {
+      subscribe: withFilter(
+        (_, args, context) => {
+          if (!context.user) {
+            throw new AuthenticationError('Not authenticated');
+          }
+          return pubsub.asyncIterator(EVENTS.MESSAGE_DELETED);
+        },
+        async (payload, variables, context) => {
+          try {
+            const conversation = await Conversation.findById(variables.conversationId);
+            if (!conversation) return false;
+
+            return conversation.participants.some(
+              p => p.user.toString() === context.user.id.toString()
+            );
+          } catch (error) {
+            console.error('Subscription filter error:', error);
+            return false;
+          }
+        }
+      )
+    },
+
+    userPresence: {
+      subscribe: withFilter(
+        (_, args, context) => {
+          if (!context.user) {
+            throw new AuthenticationError('Not authenticated');
+          }
+          return pubsub.asyncIterator(EVENTS.USER_PRESENCE);
+        },
+        async (payload, variables, context) => {
+          const { filter } = variables;
+          
+          if (filter.conversationId) {
+            // If conversation specific, verify user is participant
+            const conversation = await Conversation.findById(filter.conversationId);
+            if (!conversation) return false;
+
+            return conversation.participants.some(
+              p => p.user.toString() === context.user.id.toString()
+            );
+          }
+
+          // For user specific presence, anyone can subscribe
+          if (filter.userId) {
+            return true;
+          }
+
+          return false;
+        }
+      )
+    },
+
+    userTyping: {
+      subscribe: withFilter(
+        (_, args, context) => {
+          if (!context.user) {
+            throw new AuthenticationError('Not authenticated');
+          }
+          return pubsub.asyncIterator(EVENTS.USER_TYPING);
+        },
+        async (payload, variables, context) => {
+          try {
+            const conversation = await Conversation.findById(variables.conversationId);
+            if (!conversation) return false;
+
+            return conversation.participants.some(
+              p => p.user.toString() === context.user.id.toString()
+            );
+          } catch (error) {
+            console.error('Subscription filter error:', error);
+            return false;
+          }
+        }
+      )
+    },
+
+    meetingUpdated: {
+      subscribe: withFilter(
+        (_, args, context) => {
+          if (!context.user) {
+            throw new AuthenticationError('Not authenticated');
+          }
+          return pubsub.asyncIterator(EVENTS.MEETING_UPDATED);
+        },
+        async (payload, variables, context) => {
+          try {
+            const meeting = await Meeting.findById(variables.meetingId);
+            if (!meeting) return false;
+
+            // Allow if user is organizer or participant
+            return (
+              meeting.organizer.toString() === context.user.id.toString() ||
+              meeting.participants.some(p => p.user.toString() === context.user.id.toString())
+            );
+          } catch (error) {
+            console.error('Subscription filter error:', error);
+            return false;
+          }
+        }
+      )
     }
   }
 };
 
-module.exports = resolvers;
+module.exports = {
+  resolvers,
+  pubsub,
+  verifySubscriptionAuth
+};

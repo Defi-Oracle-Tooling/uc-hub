@@ -5,9 +5,9 @@ const typeDefs = gql`
     id: ID!
     name: String!
     email: String!
-    role: String
-    preferences: UserPreferences
-    lastLogin: String
+    avatar: String
+    status: String
+    lastSeen: String
   }
 
   type UserPreferences {
@@ -22,6 +22,8 @@ const typeDefs = gql`
     translatedContent: String
     originalLanguage: String
     readBy: [MessageReadStatus]
+    language: String
+    confidence: Float
   }
 
   type MessageReadStatus {
@@ -34,12 +36,12 @@ const typeDefs = gql`
     content: String!
     sender: User!
     recipients: [User!]
-    conversation: Conversation
-    platform: String!
-    metadata: MessageMetadata
-    attachments: [Attachment]
+    conversationId: ID!
+    platform: String
     createdAt: String!
     updatedAt: String
+    readBy: [User!]
+    status: String
   }
 
   type Attachment {
@@ -53,13 +55,13 @@ const typeDefs = gql`
 
   type Conversation {
     id: ID!
-    title: String!
-    platform: String!
     participants: [User!]!
-    messages: [Message!]
+    messages: [Message!]!
     lastMessage: Message
-    createdAt: String!
     updatedAt: String!
+    createdAt: String!
+    name: String
+    type: String
   }
 
   type Meeting {
@@ -93,56 +95,61 @@ const typeDefs = gql`
     name: String!
     status: String!
     lastActive: String
+    conversation: ID
   }
 
   type Query {
+    me: User
+    users: [User!]!
+    user(id: ID!): User
+    conversations: [Conversation!]!
+    conversation(id: ID!): Conversation
+    messages(conversationId: ID!, limit: Int, offset: Int): [Message!]!
     getCurrentUser: User
     getUser(id: ID!): User
     getUsers: [User!]
-    
-    conversations: [Conversation!]
-    conversation(id: ID!): Conversation
-    
-    messages(conversationId: ID!, limit: Int, offset: Int): [Message!]
-    message(id: ID!): Message
-    
     meetings(upcoming: Boolean, limit: Int, offset: Int): [Meeting!]
     meeting(id: ID!): Meeting
   }
 
   type Mutation {
-    # User mutations
-    login(email: String!, password: String!): AuthPayload
-    register(name: String!, email: String!, password: String!): AuthPayload
+    login(email: String!, password: String!): AuthPayload!
+    register(name: String!, email: String!, password: String!): AuthPayload!
+    sendMessage(content: String!, recipients: [ID!]!, conversationId: ID!, platform: String): Message!
+    updateMessage(id: ID!, content: String!): Message!
+    deleteMessage(id: ID!): Boolean!
+    updateUserStatus(status: String!): User!
     updateUserPreferences(preferences: UserPreferencesInput!): User
-    
-    # Message mutations
-    sendMessage(content: String!, conversationId: ID!, recipients: [ID!], platform: String!): Message
-    translateMessage(messageId: ID!, targetLanguage: String!): Message
-    markMessageAsRead(messageId: ID!): Message
-    
-    # Conversation mutations
     createConversation(title: String!, participants: [ID!]!, platform: String!): Conversation
     addParticipantToConversation(conversationId: ID!, userId: ID!): Conversation
-    
-    # Meeting mutations
     scheduleMeeting(meeting: MeetingInput!): Meeting
     updateMeeting(id: ID!, meeting: MeetingUpdateInput!): Meeting
     cancelMeeting(id: ID!): Meeting
     joinMeeting(id: ID!): Meeting
   }
 
+  enum SubscriptionEvent {
+    MESSAGE_CREATED
+    MESSAGE_UPDATED
+    MESSAGE_DELETED
+    USER_PRESENCE
+    USER_TYPING
+    MEETING_UPDATED
+  }
+
+  input SubscriptionFilter {
+    event: SubscriptionEvent!
+    conversationId: ID
+    userId: ID
+  }
+
   type Subscription {
-    # Real-time message subscriptions
-    newMessage(conversationId: ID!): Message
-    messageUpdated(conversationId: ID!): Message
-    
-    # User presence subscriptions
-    userPresenceChanged(conversationId: ID): UserPresence
-    userTyping(conversationId: ID!): UserTypingEvent
-    
-    # Meeting subscriptions
-    meetingUpdated(id: ID!): Meeting
+    messageCreated(conversationId: ID!): Message!
+    messageUpdated(conversationId: ID!): Message!
+    messageDeleted(conversationId: ID!): ID!
+    userPresence(filter: SubscriptionFilter!): UserPresence!
+    userTyping(conversationId: ID!): UserTypingEvent!
+    meetingUpdated(meetingId: ID!): Meeting!
     meetingParticipantJoined(meetingId: ID!): MeetingParticipant
   }
 
@@ -150,11 +157,11 @@ const typeDefs = gql`
     user: User!
     conversationId: ID!
     isTyping: Boolean!
+    timestamp: String!
   }
 
   type AuthPayload {
     token: String!
-    refreshToken: String!
     user: User!
   }
 

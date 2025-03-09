@@ -1,189 +1,131 @@
-import { io } from 'socket.io-client';
-
-/**
- * WebSocket service for real-time communication
- * Handles connection, authentication, and events for the Socket.io client
- */
 class WebSocketService {
   constructor() {
     this.socket = null;
-    this.listeners = {};
-    this.isConnected = false;
+    this.handlers = new Map();
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 5;
+    this.baseReconnectDelay = 1000; // Start with 1 second
   }
 
-  /**
-   * Initialize WebSocket connection
-   * @param {string} token - JWT auth token
-   */
   connect(token) {
-    if (!token) {
-      console.error('Token is required to establish WebSocket connection');
-      return;
+    if (this.socket?.connected) return;
+
+    const wsUrl = process.env.REACT_APP_WS_URL || 'ws://localhost:4000/graphql';
+    this.socket = new WebSocket(wsUrl);
+    this.socket.onopen = this.handleOpen.bind(this);
+    this.socket.onclose = this.handleClose.bind(this);
+    this.socket.onmessage = this.handleMessage.bind(this);
+    this.socket.onerror = this.handleError.bind(this);
+
+    // Add auth token to connection
+    if (token) {
+      this.socket.token = token;
     }
-
-    if (this.socket && this.isConnected) {
-      console.log('WebSocket connection already established');
-      return;
-    }
-
-    // Create socket connection with auth token
-    this.socket = io(process.env.REACT_APP_WS_URL || 'http://localhost:4000', {
-      auth: { token },
-      reconnection: true,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
-      reconnectionAttempts: this.maxReconnectAttempts,
-    });
-
-    // Set up event listeners
-    this.socket.on('connect', () => {
-      console.log('WebSocket connected');
-      this.isConnected = true;
-      this.reconnectAttempts = 0;
-      this._notifyListeners('connection_status', { connected: true });
-    });
-
-    this.socket.on('disconnect', (reason) => {
-      console.log(`WebSocket disconnected: ${reason}`);
-      this.isConnected = false;
-      this._notifyListeners('connection_status', { 
-        connected: false,
-        reason 
-      });
-    });
-
-    this.socket.on('connect_error', (error) => {
-      console.error('WebSocket connection error:', error);
-      this.reconnectAttempts += 1;
-      
-      // If maximum reconnection attempts reached, stop trying
-      if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-        this.socket.disconnect();
-        this._notifyListeners('connection_error', {
-          error: 'Maximum reconnection attempts reached'
-        });
-      }
-    });
-
-    // Listen for custom events from server
-    this.socket.on('user:online', (data) => {
-      this._notifyListeners('user_online', data);
-    });
-
-    this.socket.on('user:offline', (data) => {
-      this._notifyListeners('user_offline', data);
-    });
-
-    this.socket.on('user:typing', (data) => {
-      this._notifyListeners('user_typing', data);
-    });
-
-    this.socket.on('user:stopped-typing', (data) => {
-      this._notifyListeners('user_stopped_typing', data);
-    });
   }
 
-  /**
-   * Disconnect WebSocket
-   */
+  handleOpen() {
+    console.log('WebSocket connected');
+    this.reconnectAttempts = 0; // Reset reconnect attempts on successful connection
+    this.updatePresence('online'); // Set initial presence
+  }
+
+  handleClose() {
+    console.log('WebSocket disconnected');
+    this.attemptReconnect();
+  }
+
+  handleError(error) {
+    console.error('WebSocket error:', error);
+    this.attemptReconnect();
+  }
+
+  handleMessage(event) {
+    try {
+      const data = JSON.parse(event.data);
+      const handlers = this.handlers.get(data.type) || [];
+      handlers.forEach(callback => callback(data.payload));
+    } catch (error) {
+      console.error('Error handling message:', error);
+    }
+  }
+
+  attemptReconnect() {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.error('Max reconnection attempts reached');
+      return;
+    }
+
+    // Calculate delay with exponential backoff
+    const delay = this.baseReconnectDelay * Math.pow(2, this.reconnectAttempts);
+    
+    console.log(`Attempting to reconnect in ${delay}ms...`);
+    
+    setTimeout(() => {
+      this.reconnectAttempts++;
+      this.connect(this.socket?.token);
+    }, delay);
+  }
+
   disconnect() {
     if (this.socket) {
-      this.socket.disconnect();
+      this.updatePresence('offline');
+      this.socket.close();
       this.socket = null;
-      this.isConnected = false;
-      console.log('WebSocket disconnected');
     }
   }
 
-  /**
-   * Join a conversation room to receive messages
-   * @param {string} conversationId - ID of conversation to join
-   */
-  joinConversation(conversationId) {
-    if (!this.isConnected || !conversationId) return;
-    
-    this.socket.emit('conversation:join', conversationId);
-    console.log(`Joined conversation: ${conversationId}`);
+  on(type, callback) {
+    if (!this.handlers.has(type)) {
+      this.handlers.set(type, []);
+    }
+    this.handlers.get(type).push(callback);
   }
 
-  /**
-   * Leave a conversation room
-   * @param {string} conversationId - ID of conversation to leave
-   */
-  leaveConversation(conversationId) {
-    if (!this.isConnected || !conversationId) return;
-    
-    this.socket.emit('conversation:leave', conversationId);
-    console.log(`Left conversation: ${conversationId}`);
+  off(type, callback) {
+    if (!this.handlers.has(type)) return;
+    const handlers = this.handlers.get(type);
+    const index = handlers.indexOf(callback);
+    if (index !== -1) {
+      handlers.splice(index, 1);
+    }
   }
 
-  /**
-   * Send typing indicator to conversation
-   * @param {string} conversationId - Conversation ID
-   * @param {boolean} isTyping - Whether user is typing or stopped typing
-   */
+  send(type, payload) {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      console.error('Socket is not connected');
+      return;
+    }
+
+    this.socket.send(JSON.stringify({ type, payload }));
+  }
+
+  // Conversation-specific methods
   sendTypingStatus(conversationId, isTyping) {
-    if (!this.isConnected || !conversationId) return;
-    
-    const event = isTyping ? 'typing:start' : 'typing:stop';
-    this.socket.emit(event, conversationId);
+    this.send('typing_status', { conversationId, isTyping });
   }
 
-  /**
-   * Register event listener
-   * @param {string} event - Event name
-   * @param {Function} callback - Callback function when event is received
-   * @returns {Function} Function to remove the listener
-   */
-  on(event, callback) {
-    if (!this.listeners[event]) {
-      this.listeners[event] = [];
-    }
-    
-    this.listeners[event].push(callback);
-    
-    // Return function to remove this listener
-    return () => {
-      this.listeners[event] = this.listeners[event].filter(cb => cb !== callback);
-    };
+  markMessageAsRead(messageId, conversationId) {
+    this.send('message_read', { messageId, conversationId });
   }
 
-  /**
-   * Remove event listener
-   * @param {string} event - Event name
-   * @param {Function} callback - Callback function to remove
-   */
-  off(event, callback) {
-    if (!this.listeners[event]) return;
-    
-    if (callback) {
-      this.listeners[event] = this.listeners[event].filter(cb => cb !== callback);
-    } else {
-      delete this.listeners[event];
-    }
+  updatePresence(status) {
+    this.send('presence', { status });
   }
 
-  /**
-   * Notify all listeners of an event
-   * @private
-   * @param {string} event - Event name
-   * @param {Object} data - Event data
-   */
-  _notifyListeners(event, data) {
-    const callbacks = this.listeners[event] || [];
-    callbacks.forEach(callback => {
-      try {
-        callback(data);
-      } catch (error) {
-        console.error(`Error in ${event} listener:`, error);
+  // Set up ping/pong for connection health check
+  startHeartbeat() {
+    this.heartbeatInterval = setInterval(() => {
+      if (this.socket?.readyState === WebSocket.OPEN) {
+        this.send('ping', { timestamp: Date.now() });
       }
-    });
+    }, 30000); // Send heartbeat every 30 seconds
+  }
+
+  stopHeartbeat() {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+    }
   }
 }
 
-// Create singleton instance
-const websocketService = new WebSocketService();
-
-export default websocketService;
+export default new WebSocketService();
