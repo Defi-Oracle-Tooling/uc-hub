@@ -1,0 +1,61 @@
+{
+  "deployment_mode": "cloud",
+  "services": {
+    "translation": {
+      "api_key": "${TRANSLATION_API_KEY}",
+      "endpoint": "https://api.translation-service.com/v1",
+      "default_source_language": "en",
+      "cache_enabled": true,
+      "cache_ttl_seconds": 86400
+    },
+    "speech_to_text": {
+      "api_key": "${SPEECH_TO_TEXT_API_KEY}",
+      "endpoint": "https://api.speech-to-text.com/v1",
+      "service_provider": "generic",
+      "default_language": "en",
+      "support_diarization": true,
+      "max_speakers": 10
+    },
+    "text_to_speech": {
+      "api_key": "${TEXT_TO_SPEECH_API_KEY}",
+      "endpoint": "https://api.text-to-speech.com/v1",
+      "default_voice": "en-US-standard-B",
+      "available_voices": ["en-US-standard-A", "en-US-standard-B", "en-GB-standard-A"]
+    },
+    "summarization": {
+      "api_key": "${SUMMARIZATION_API_KEY}",
+      "endpoint": "https://api.summarization.com/v1",
+      "max_summary_length": 1000,
+      "default_language": "en"
+    },
+    "voice_cloning": {
+      "api_key": "${VOICE_CLONING_API_KEY}",
+      "endpoint": "https://api.voice-cloning.com/v1",
+      "min_sample_duration_seconds": 30,
+      "enabled": false
+    }
+  },
+  "edge": {
+    "models_path": "./models",
+    "max_memory_mb": 2048,
+    "available_services": ["translation", "speech_to_text"],
+    "translation": {
+      "model_size": "small",
+      "languages": ["en", "es", "fr", "de"]
+    },
+    "speech_to_text": {
+      "model_size": "medium",
+      "languages": ["en", "es", "fr", "de"]
+    }
+  },
+  "logging": {
+    "level": "info",
+    "metrics_enabled": true,
+    "performance_tracking": true
+  },
+  "fallbacks": {
+    "enable_fallback_to_cloud": true,
+    "max_retries": 3,
+    "retry_delay_ms": 1000
+  }
+}
