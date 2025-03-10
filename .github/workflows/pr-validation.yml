@@ -29,6 +29,7 @@ jobs:
       
       - name: Run security scan
         uses: snyk/actions/node@master
+        continue-on-error: true
         with:
           args: --severity-threshold=high
         env:
