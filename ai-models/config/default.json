@@ -57,5 +57,36 @@
     "enable_fallback_to_cloud": true,
     "max_retries": 3,
     "retry_delay_ms": 1000
+  },
+  "translation": {
+    "supported_language_pairs": {
+      "en": ["es", "fr", "de", "zh", "ja", "ko", "ru", "ar", "hi"],
+      "es": ["en", "fr", "pt"],
+      "fr": ["en", "es", "de"],
+      "de": ["en", "fr", "es"],
+      "zh": ["en"],
+      "ja": ["en"],
+      "ko": ["en"],
+      "ru": ["en"],
+      "ar": ["en"],
+      "hi": ["en"]
+    },
+    "model_settings": {
+      "batch_size": 32,
+      "max_length": 512,
+      "cache_dir": "/tmp/transformers_cache",
+      "device": "cuda"
+    },
+    "api": {
+      "host": "0.0.0.0",
+      "port": 8000,
+      "workers": 4
+    }
+  },
+  "redis": {
+    "host": "redis",
+    "port": 6379,
+    "db": 0,
+    "cache_ttl": 86400
   }
 }

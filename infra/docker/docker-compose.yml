@@ -15,7 +15,7 @@ services:
       - uc-hub-network
 
   redis:
-    image: redis:6.2
+    image: redis:6-alpine
     container_name: uc-hub-redis
     ports:
       - "6379:6379"
@@ -63,9 +63,25 @@ services:
     networks:
       - uc-hub-network
 
+  translation:
+    build:
+      context: ../../ai-models/translation
+      dockerfile: Dockerfile
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MODEL_CACHE_DIR=/tmp/transformers_cache
+    volumes:
+      - model_cache:/tmp/transformers_cache
+    ports:
+      - "8010:8000"
+    depends_on:
+      - redis
+
 volumes:
   mongodb_data:
   redis_data:
+  model_cache:
 
 networks:
   uc-hub-network:

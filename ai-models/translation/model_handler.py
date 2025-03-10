@@ -9,72 +9,121 @@ import os
 import json
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Union
+import torch
+from transformers import MarianMTModel, MarianTokenizer
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 
-class TranslationModelHandler(ABC):
-    """Base class for translation model handlers"""
-    
-    @abstractmethod
-    def translate(self, text: str, source_lang: str, target_lang: str) -> str:
-        """Translate text from source language to target language"""
-        pass
-    
-    @abstractmethod
-    def batch_translate(self, texts: List[str], source_lang: str, target_lang: str) -> List[str]:
-        """Translate multiple texts from source language to target language"""
-        pass
+app = FastAPI()
 
-class CloudTranslationHandler(TranslationModelHandler):
-    """Handler for cloud-based translation services"""
-    
-    def __init__(self, api_key: str, endpoint: str):
-        self.api_key = api_key
-        self.endpoint = endpoint
-        
-    def translate(self, text: str, source_lang: str, target_lang: str) -> str:
-        """Translate using cloud API"""
-        # In a real implementation, this would make an API call
-        print(f"Translating from {source_lang} to {target_lang}")
-        return f"[Translated: {text}]"
-        
-    def batch_translate(self, texts: List[str], source_lang: str, target_lang: str) -> List[str]:
-        """Batch translate using cloud API"""
-        return [self.translate(text, source_lang, target_lang) for text in texts]
+class TranslationRequest(BaseModel):
+    text: str
+    target_language: str
+    source_language: Optional[str] = None
 
-class EdgeTranslationHandler(TranslationModelHandler):
-    """Handler for edge-deployed translation models"""
-    
-    def __init__(self, model_path: str):
-        self.model_path = model_path
-        print(f"Loading edge translation model from {model_path}")
-        # In a real implementation, this would load a model
-        
-    def translate(self, text: str, source_lang: str, target_lang: str) -> str:
-        """Translate using local model"""
-        print(f"Edge translating from {source_lang} to {target_lang}")
-        return f"[Edge Translated: {text}]"
-        
-    def batch_translate(self, texts: List[str], source_lang: str, target_lang: str) -> List[str]:
-        """Batch translate using local model"""
-        return [self.translate(text, source_lang, target_lang) for text in texts]
+class BatchTranslationRequest(BaseModel):
+    texts: List[str]
+    target_language: str
+    source_language: Optional[str] = None
 
-def get_translation_handler(config_path: str = "config.json") -> TranslationModelHandler:
-    """Factory function to get the appropriate translation handler"""
-    # Load configuration
-    try:
-        with open(config_path, 'r') as f:
+class TranslationResponse(BaseModel):
+    translated_text: str
+    detected_language: str
+    confidence: float
+
+class BatchTranslationResponse(BaseModel):
+    translations: List[TranslationResponse]
+
+class LanguageDetectionResponse(BaseModel):
+    detected_language: str
+    confidence: float
+
+class TranslationModelHandler:
+    def __init__(self):
+        self.models = {}
+        self.tokenizers = {}
+        self.language_pairs = self._load_language_pairs()
+        
+    def _load_language_pairs(self):
+        # Load supported language pairs from config
+        config_path = os.path.join(os.path.dirname(__file__), '../config/default.json')
+        with open(config_path) as f:
             config = json.load(f)
-    except Exception as e:
-        print(f"Error loading config: {e}")
-        # Default to cloud handler
-        return CloudTranslationHandler(
-            api_key=os.environ.get("TRANSLATION_API_KEY", "demo-key"),
-            endpoint=os.environ.get("TRANSLATION_ENDPOINT", "https://api.translation.com/v1")
-        )
+            return config['translation']['supported_language_pairs']
     
-    if config.get("deployment_mode") == "edge":
-        return EdgeTranslationHandler(model_path=config.get("model_path", "models/translation"))
-    else:
-        return CloudTranslationHandler(
-            api_key=config.get("api_key", os.environ.get("TRANSLATION_API_KEY", "demo-key")),
-            endpoint=config.get("endpoint", os.environ.get("TRANSLATION_ENDPOINT", "https://api.translation.com/v1"))
-        )
+    def _get_model_name(self, source_lang, target_lang):
+        if source_lang and target_lang:
+            return f'Helsinki-NLP/opus-mt-{source_lang}-{target_lang}'
+        return None
+    
+    def _load_model(self, source_lang, target_lang):
+        model_name = self._get_model_name(source_lang, target_lang)
+        if model_name not in self.models:
+            try:
+                self.tokenizers[model_name] = MarianTokenizer.from_pretrained(model_name)
+                self.models[model_name] = MarianMTModel.from_pretrained(model_name)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Unsupported language pair: {source_lang}-{target_lang}")
+        return self.models[model_name], self.tokenizers[model_name]
+    
+    async def translate(self, text: str, target_lang: str, source_lang: Optional[str] = None):
+        if not source_lang:
+            # Detect language if not provided
+            source_lang = await self.detect_language(text)
+        
+        model, tokenizer = self._load_model(source_lang, target_lang)
+        
+        try:
+            inputs = tokenizer(text, return_tensors="pt", padding=True)
+            translated = model.generate(**inputs)
+            result = tokenizer.decode(translated[0], skip_special_tokens=True)
+            
+            return TranslationResponse(
+                translated_text=result,
+                detected_language=source_lang,
+                confidence=0.95  # TODO: Implement proper confidence scoring
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    async def batch_translate(self, texts: List[str], target_lang: str, source_lang: Optional[str] = None):
+        results = []
+        for text in texts:
+            result = await self.translate(text, target_lang, source_lang)
+            results.append(result)
+        return BatchTranslationResponse(translations=results)
+    
+    async def detect_language(self, text: str):
+        # TODO: Implement proper language detection
+        # For now, default to 'en' as source language
+        return 'en'
+
+model_handler = TranslationModelHandler()
+
+@app.post("/translate", response_model=TranslationResponse)
+async def translate(request: TranslationRequest):
+    return await model_handler.translate(
+        request.text,
+        request.target_language,
+        request.source_language
+    )
+
+@app.post("/translate/batch", response_model=BatchTranslationResponse)
+async def batch_translate(request: BatchTranslationRequest):
+    return await model_handler.batch_translate(
+        request.texts,
+        request.target_language,
+        request.source_language
+    )
+
+@app.post("/detect", response_model=LanguageDetectionResponse)
+async def detect_language(text: str):
+    detected = await model_handler.detect_language(text)
+    return LanguageDetectionResponse(
+        detected_language=detected,
+        confidence=0.95  # TODO: Implement proper confidence scoring
+    )
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
