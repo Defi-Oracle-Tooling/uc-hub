@@ -1,0 +1,52 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          # - alertmanager:9093
+
+rule_files:
+  # - "first_rules.yml"
+  # - "second_rules.yml"
+
+scrape_configs:
+  - job_name: 'uc-hub-backend'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['uc-hub-backend:4000']
+        labels:
+          service: 'backend'
+          environment: '${ENVIRONMENT}'
+
+  - job_name: 'uc-hub-frontend'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['uc-hub-frontend:80']
+        labels:
+          service: 'frontend'
+          environment: '${ENVIRONMENT}'
+          
+  - job_name: 'uc-hub-ai-models'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['uc-hub-ai-models:8000']
+        labels:
+          service: 'ai-models'
+          environment: '${ENVIRONMENT}'
+
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+        labels:
+          service: 'node-metrics'
+          environment: '${ENVIRONMENT}'
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          service: 'prometheus'
+          environment: '${ENVIRONMENT}'
