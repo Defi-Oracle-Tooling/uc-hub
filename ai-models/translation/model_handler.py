@@ -7,12 +7,21 @@ whether they're cloud-based API services or locally deployed models.
 
 import os
 import json
+import torch
+import fasttext
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Union
-import torch
 from transformers import MarianMTModel, MarianTokenizer
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+
+# Download the language detection model
+import urllib.request
+FASTTEXT_MODEL_URL = "https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.bin"
+MODEL_PATH = "lid.176.bin"
+
+if not os.path.exists(MODEL_PATH):
+    urllib.request.urlretrieve(FASTTEXT_MODEL_URL, MODEL_PATH)
 
 app = FastAPI()
 
@@ -43,6 +52,7 @@ class TranslationModelHandler:
         self.models = {}
         self.tokenizers = {}
         self.language_pairs = self._load_language_pairs()
+        self.lang_detector = fasttext.load_model(MODEL_PATH)
         
     def _load_language_pairs(self):
         # Load supported language pairs from config
@@ -66,10 +76,33 @@ class TranslationModelHandler:
                 raise HTTPException(status_code=400, detail=f"Unsupported language pair: {source_lang}-{target_lang}")
         return self.models[model_name], self.tokenizers[model_name]
     
+    async def detect_language(self, text: str) -> str:
+        try:
+            # FastText expects one line of text
+            text = text.replace('\n', ' ')
+            predictions = self.lang_detector.predict(text)
+            lang_code = predictions[0][0].replace('__label__', '')
+            confidence = float(predictions[1][0])
+            
+            return LanguageDetectionResponse(
+                detected_language=lang_code,
+                confidence=confidence
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Language detection failed: {str(e)}")
+
     async def translate(self, text: str, target_lang: str, source_lang: Optional[str] = None):
         if not source_lang:
             # Detect language if not provided
-            source_lang = await self.detect_language(text)
+            detection_result = await self.detect_language(text)
+            source_lang = detection_result.detected_language
+        
+        if source_lang == target_lang:
+            return TranslationResponse(
+                translated_text=text,
+                detected_language=source_lang,
+                confidence=1.0
+            )
         
         model, tokenizer = self._load_model(source_lang, target_lang)
         
@@ -92,11 +125,6 @@ class TranslationModelHandler:
             result = await self.translate(text, target_lang, source_lang)
             results.append(result)
         return BatchTranslationResponse(translations=results)
-    
-    async def detect_language(self, text: str):
-        # TODO: Implement proper language detection
-        # For now, default to 'en' as source language
-        return 'en'
 
 model_handler = TranslationModelHandler()
 

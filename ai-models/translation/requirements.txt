@@ -7,3 +7,4 @@ pydantic==1.10.9
 python-multipart==0.0.6
 numpy==1.24.3
 redis==4.5.5
+fasttext==0.9.2
