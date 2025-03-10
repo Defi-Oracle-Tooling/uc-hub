@@ -1,13 +1,30 @@
 import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
+import { TranslationControls } from './TranslationControls';
 
 const MessageBubble = ({ message, isTranslationEnabled, targetLanguage }) => {
   const [translatedContent, setTranslatedContent] = useState('');
   const [isTranslating, setIsTranslating] = useState(false);
+  const [translation, setTranslation] = useState(null);
+  const [showTranslation, setShowTranslation] = useState(false);
+  const [showTranslationControls, setShowTranslationControls] = useState(false);
 
   const formatTime = (dateString) => {
     return format(new Date(dateString), 'h:mm a');
   };
+
+  const handleTranslation = (newTranslation) => {
+    setTranslation(newTranslation);
+    setShowTranslation(true);
+  };
+
+  const toggleTranslation = () => {
+    if (translation) {
+      setShowTranslation(!showTranslation);
+    }
+  };
+
+  const messageContent = showTranslation ? translation?.text : message.content;
 
   // Handle translation when enabled
   useEffect(() => {
@@ -48,7 +65,7 @@ const MessageBubble = ({ message, isTranslationEnabled, targetLanguage }) => {
             : 'bg-white border border-gray-200'
         }`}>
           <p className={`text-sm ${message.isCurrentUser ? 'text-white' : 'text-gray-900'}`}>
-            {message.content}
+            {messageContent}
           </p>
           
           {isTranslationEnabled && isTranslating && (
@@ -67,6 +84,15 @@ const MessageBubble = ({ message, isTranslationEnabled, targetLanguage }) => {
             }`}>
               {translatedContent}
             </p>
+          )}
+
+          {translation && (
+            <button
+              onClick={toggleTranslation}
+              className="text-xs underline mt-1 opacity-75 hover:opacity-100"
+            >
+              {showTranslation ? 'Show original' : 'Show translation'}
+            </button>
           )}
           
           <div className={`mt-1 text-xs ${
@@ -93,7 +119,23 @@ const MessageBubble = ({ message, isTranslationEnabled, targetLanguage }) => {
                 )}
               </span>
             )}
+            <button
+              onClick={() => setShowTranslationControls(!showTranslationControls)}
+              className="ml-2 underline hover:opacity-100"
+            >
+              {showTranslationControls ? 'Hide translation' : 'Translate'}
+            </button>
           </div>
+
+          {showTranslationControls && (
+            <div className="mt-2">
+              <TranslationControls
+                messageId={message.id}
+                originalText={message.content}
+                onTranslation={handleTranslation}
+              />
+            </div>
+          )}
         </div>
       </div>
     </div>

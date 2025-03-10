@@ -9,6 +9,7 @@ const Message = require('./models/Message');
 const Meeting = require('./models/Meeting');
 const Conversation = require('./models/Conversation');
 const { ERROR_TYPES, createGraphQLError } = require('./utils/errorHandler');
+const translationService = require('./services/translation');
 
 // Create PubSub instance for handling subscriptions
 const pubsub = new PubSub();
@@ -261,6 +262,14 @@ const resolvers = {
           isConnected: false
         };
       }
+    },
+
+    supportedLanguages: async (_, __, { user }) => {
+      if (!user) {
+        throw new AuthenticationError('Not authenticated');
+      }
+
+      return translationService.getSupportedLanguages();
     }
   },
   
@@ -580,6 +589,84 @@ const resolvers = {
         console.error('Teams disconnection error:', error);
         throw error;
       }
+    },
+
+    translateMessage: async (_, { messageId, targetLanguage }, { user }) => {
+      if (!user) {
+        throw new AuthenticationError('Not authenticated');
+      }
+
+      try {
+        const message = await Message.findById(messageId);
+        if (!message) {
+          throw new Error('Message not found');
+        }
+
+        const translation = await translationService.translateMessage(
+          message.content,
+          targetLanguage
+        );
+
+        await Message.findByIdAndUpdate(messageId, {
+          'translations': {
+            ...message.translations,
+            [targetLanguage]: {
+              text: translation.translatedText,
+              detectedLanguage: translation.detectedLanguage,
+              timestamp: new Date()
+            }
+          }
+        });
+
+        return {
+          text: translation.translatedText,
+          detectedLanguage: translation.detectedLanguage,
+          confidence: translation.confidence
+        };
+      } catch (error) {
+        console.error('Translation error:', error);
+        throw new Error('Failed to translate message');
+      }
+    },
+
+    translateMessages: async (_, { messageIds, targetLanguage }, { user }) => {
+      if (!user) {
+        throw new AuthenticationError('Not authenticated');
+      }
+
+      try {
+        const messages = await Message.find({ _id: { $in: messageIds } });
+        if (!messages.length) {
+          throw new Error('No messages found');
+        }
+
+        const translations = await translationService.translateBatch(messages, targetLanguage);
+
+        // Update messages with translations
+        await Promise.all(
+          messages.map(async (message, index) => {
+            await Message.findByIdAndUpdate(message._id, {
+              'translations': {
+                ...message.translations,
+                [targetLanguage]: {
+                  text: translations[index].translatedText,
+                  detectedLanguage: translations[index].detectedLanguage,
+                  timestamp: new Date()
+                }
+              }
+            });
+          })
+        );
+
+        return translations.map(t => ({
+          text: t.translatedText,
+          detectedLanguage: t.detectedLanguage,
+          confidence: t.confidence
+        }));
+      } catch (error) {
+        console.error('Batch translation error:', error);
+        throw new Error('Failed to translate messages');
+      }
     }
   },
   
@@ -824,6 +911,49 @@ const resolvers = {
         email: user.integrations.teams.email,
         name: user.name
       };
+    }
+  },
+
+  Message: {
+    // ...existing Message fields...
+
+    translations: async (message, { languages }, { user }) => {
+      if (!user) {
+        throw new AuthenticationError('Not authenticated');
+      }
+
+      // If specific languages are requested, translate if not already available
+      if (languages && languages.length > 0) {
+        const missingTranslations = languages.filter(
+          lang => !message.translations?.[lang]
+        );
+
+        if (missingTranslations.length > 0) {
+          await Promise.all(
+            missingTranslations.map(async lang => {
+              const translation = await translationService.translateMessage(
+                message.content,
+                lang
+              );
+
+              message.translations = {
+                ...message.translations,
+                [lang]: {
+                  text: translation.translatedText,
+                  detectedLanguage: translation.detectedLanguage,
+                  timestamp: new Date()
+                }
+              };
+
+              await Message.findByIdAndUpdate(message._id, {
+                translations: message.translations
+              });
+            })
+          );
+        }
+      }
+
+      return message.translations || {};
     }
   }
 };

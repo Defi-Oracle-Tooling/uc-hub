@@ -9,6 +9,8 @@ const typeDefs = gql`
     status: String
     lastSeen: String
     teamsConnection: TeamsConnectionStatus
+    preferredLanguage: String
+    autoTranslate: Boolean
   }
 
   type UserPreferences {
@@ -43,6 +45,9 @@ const typeDefs = gql`
     updatedAt: String
     readBy: [User!]
     status: String
+    translations(languages: [String!]): JSON
+    translations: [TranslationResult]
+    detectedLanguage: String
   }
 
   type Attachment {
@@ -113,6 +118,9 @@ const typeDefs = gql`
     meeting(id: ID!): Meeting
     teamsAuthUrl: String!
     teamsConnectionStatus: TeamsConnectionStatus!
+    supportedLanguages: [Language!]!
+    translateMessage(messageId: ID!, targetLanguage: String!): TranslationResult!
+    detectLanguage(text: String!): String!
   }
 
   type Mutation {
@@ -131,6 +139,8 @@ const typeDefs = gql`
     joinMeeting(id: ID!): Meeting
     connectTeams(code: String!, state: String!): TeamsAuthResponse!
     disconnectTeams: Boolean!
+    translateMessage(messageId: ID!, targetLanguage: String!): Translation!
+    translateMessages(messageIds: [ID!]!, targetLanguage: String!): [Translation!]!
   }
 
   enum SubscriptionEvent {
@@ -215,6 +225,46 @@ const typeDefs = gql`
     isConnected: Boolean!
     email: String
     name: String
+  }
+
+  type Translation {
+    text: String!
+    detectedLanguage: String!
+    confidence: Float
+  }
+
+  type MessageTranslation {
+    text: String!
+    detectedLanguage: String!
+    timestamp: String!
+  }
+
+  type Language {
+    code: String!
+    name: String!
+  }
+
+  type LanguageInfo {
+    code: String!
+    name: String!
+    nativeName: String!
+  }
+
+  type TranslationResult {
+    translatedText: String!
+    detectedLanguage: String
+    confidence: Float
+  }
+
+  extend type Query {
+    supportedLanguages: [LanguageInfo!]!
+    translateMessage(messageId: ID!, targetLanguage: String!): TranslationResult!
+    detectLanguage(text: String!): String!
+  }
+
+  extend type Mutation {
+    translateMessage(messageId: ID!, targetLanguage: String!): Translation!
+    translateMessages(messageIds: [ID!]!, targetLanguage: String!): [Translation!]!
   }
 `;
 
