@@ -8,6 +8,7 @@ const typeDefs = gql`
     avatar: String
     status: String
     lastSeen: String
+    teamsConnection: TeamsConnectionStatus
   }
 
   type UserPreferences {
@@ -110,6 +111,8 @@ const typeDefs = gql`
     getUsers: [User!]
     meetings(upcoming: Boolean, limit: Int, offset: Int): [Meeting!]
     meeting(id: ID!): Meeting
+    teamsAuthUrl: String!
+    teamsConnectionStatus: TeamsConnectionStatus!
   }
 
   type Mutation {
@@ -126,6 +129,8 @@ const typeDefs = gql`
     updateMeeting(id: ID!, meeting: MeetingUpdateInput!): Meeting
     cancelMeeting(id: ID!): Meeting
     joinMeeting(id: ID!): Meeting
+    connectTeams(code: String!, state: String!): TeamsAuthResponse!
+    disconnectTeams: Boolean!
   }
 
   enum SubscriptionEvent {
@@ -199,6 +204,17 @@ const typeDefs = gql`
     daysOfWeek: [Int]
     endDate: String
     occurrences: Int
+  }
+
+  type TeamsAuthResponse {
+    success: Boolean!
+    error: String
+  }
+
+  type TeamsConnectionStatus {
+    isConnected: Boolean!
+    email: String
+    name: String
   }
 `;
 

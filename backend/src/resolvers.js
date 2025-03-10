@@ -222,6 +222,46 @@ const resolvers = {
         .populate('sender')
         .populate('recipients');
     },
+
+    teamsAuthUrl: async (_, __, { user }) => {
+      if (!user) {
+        throw new AuthenticationError('Not authenticated');
+      }
+
+      const teamsAuth = require('./services/teamsAuth');
+      const state = teamsAuth.generateState();
+      await teamsAuth.storeState(state, user.id);
+      return teamsAuth.generateAuthUrl(state);
+    },
+
+    teamsConnectionStatus: async (_, __, { user }) => {
+      if (!user) {
+        throw new AuthenticationError('Not authenticated');
+      }
+
+      const teamsAuth = require('./services/teamsAuth');
+      const tokens = await teamsAuth.getStoredTokens(user.id);
+
+      if (!tokens) {
+        return {
+          isConnected: false
+        };
+      }
+
+      try {
+        const userInfo = await teamsAuth.getUserInfo(tokens.accessToken);
+        return {
+          isConnected: true,
+          email: userInfo.email,
+          name: userInfo.name
+        };
+      } catch (error) {
+        console.error('Error getting Teams connection status:', error);
+        return {
+          isConnected: false
+        };
+      }
+    }
   },
   
   Mutation: {
@@ -474,6 +514,73 @@ const resolvers = {
 
       return true;
     },
+
+    connectTeams: async (_, { code, state }, { user }) => {
+      if (!user) {
+        throw new AuthenticationError('Not authenticated');
+      }
+
+      const teamsAuth = require('./services/teamsAuth');
+      
+      try {
+        // Verify state to prevent CSRF
+        const storedUserId = await teamsAuth.verifyState(state);
+        if (!storedUserId || storedUserId !== user.id) {
+          throw new Error('Invalid state parameter');
+        }
+
+        // Exchange code for tokens
+        const tokens = await teamsAuth.getTokens(code);
+        
+        // Get user info from Teams
+        const userInfo = await teamsAuth.getUserInfo(tokens.accessToken);
+        
+        // Store tokens
+        await teamsAuth.storeTokens(user.id, tokens);
+
+        // Update user model with Teams info
+        await User.findByIdAndUpdate(user.id, {
+          'integrations.teams': {
+            connected: true,
+            teamsId: userInfo.teamsId,
+            email: userInfo.email
+          }
+        });
+
+        return {
+          success: true
+        };
+      } catch (error) {
+        console.error('Teams connection error:', error);
+        return {
+          success: false,
+          error: error.message
+        };
+      }
+    },
+
+    disconnectTeams: async (_, __, { user }) => {
+      if (!user) {
+        throw new AuthenticationError('Not authenticated');
+      }
+
+      const teamsAuth = require('./services/teamsAuth');
+      
+      try {
+        // Revoke tokens
+        await teamsAuth.revokeTokens(user.id);
+
+        // Update user model
+        await User.findByIdAndUpdate(user.id, {
+          $unset: { 'integrations.teams': 1 }
+        });
+
+        return true;
+      } catch (error) {
+        console.error('Teams disconnection error:', error);
+        throw error;
+      }
+    }
   },
   
   Subscription: {
@@ -699,6 +806,24 @@ const resolvers = {
           }
         }
       )
+    }
+  },
+
+  User: {
+    // ...existing User fields...
+
+    teamsConnection: async (user) => {
+      if (!user.integrations?.teams?.connected) {
+        return {
+          isConnected: false
+        };
+      }
+
+      return {
+        isConnected: true,
+        email: user.integrations.teams.email,
+        name: user.name
+      };
     }
   }
 };
