@@ -1,0 +1,166 @@
+_format_version: "2.1"
+_transform: true
+
+services:
+  - name: uc-hub-api
+    url: http://uc-hub-backend:4000/graphql
+    routes:
+      - name: api-route
+        paths:
+          - /api
+    plugins:
+      - name: jwt
+        config:
+          secret_is_base64: false
+          claims_to_verify:
+            - exp
+      - name: rate-limiting
+        config:
+          minute: 60
+          policy: local
+      - name: proxy-cache
+        config:
+          content_type:
+            - application/json
+          cache_ttl: 30
+          strategy: memory
+
+  - name: uc-hub-grpc
+    url: grpc://uc-hub-backend:50051
+    protocol: grpc
+    routes:
+      - name: grpc-route
+        paths:
+          - /grpc
+    plugins:
+      - name: jwt
+        config:
+          secret_is_base64: false
+          claims_to_verify:
+            - exp
+      - name: rate-limiting
+        config:
+          minute: 100
+          policy: local
+
+  - name: uc-hub-websocket
+    url: http://uc-hub-backend:4000/subscriptions
+    routes:
+      - name: websocket-route
+        paths:
+          - /subscriptions
+        protocols:
+          - http
+          - https
+    plugins:
+      - name: jwt
+        config:
+          secret_is_base64: false
+          claims_to_verify:
+            - exp
+
+  - name: uc-hub-frontend
+    url: http://uc-hub-frontend:80
+    routes:
+      - name: frontend-route
+        paths:
+          - /
+        strip_path: false
+    plugins:
+      - name: cors
+        config:
+          origins:
+            - "*"
+          methods:
+            - GET
+            - POST
+            - PUT
+            - DELETE
+            - OPTIONS
+          headers:
+            - Content-Type
+            - Authorization
+            - X-Requested-With
+          credentials: true
+          max_age: 3600
+
+plugins:
+  - name: cors
+    config:
+      origins:
+        - "*"
+      methods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - OPTIONS
+      headers:
+        - Content-Type
+        - Authorization
+        - X-Requested-With
+      credentials: true
+      max_age: 3600
+  
+  - name: prometheus
+    config:
+      status_code_metrics: true
+      latency_metrics: true
+      upstream_health_metrics: true
+      bandwidth_metrics: true
+
+  - name: request-termination
+    config:
+      status_code: 403
+      message: "Access Forbidden"
+    enabled: false
+
+upstreams:
+  - name: uc-hub-backend
+    targets:
+      - target: uc-hub-backend:4000
+        weight: 100
+    healthchecks:
+      active:
+        http_path: /health
+        healthy:
+          interval: 5
+          successes: 1
+        unhealthy:
+          interval: 5
+          http_failures: 2
+          timeouts: 1
+
+  - name: uc-hub-frontend
+    targets:
+      - target: uc-hub-frontend:80
+        weight: 100
+    healthchecks:
+      active:
+        http_path: /
+        healthy:
+          interval: 5
+          successes: 1
+        unhealthy:
+          interval: 5
+          http_failures: 2
+          timeouts: 1
+
+consumers:
+  - username: uc-hub-frontend
+    jwt_secrets:
+      - key: "frontend-key"
+        algorithm: "HS256"
+        secret: "${KONG_JWT_SECRET}"
+
+  - username: uc-hub-mobile
+    jwt_secrets:
+      - key: "mobile-key"
+        algorithm: "HS256"
+        secret: "${KONG_JWT_SECRET}"
+
+  - username: uc-hub-api
+    jwt_secrets:
+      - key: "api-key"
+        algorithm: "HS256"
+        secret: "${KONG_JWT_SECRET}"

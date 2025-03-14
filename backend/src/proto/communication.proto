@@ -1,0 +1,280 @@
+syntax = "proto3";
+
+package communication;
+
+service CommunicationService {
+  // User management
+  rpc GetUser (UserRequest) returns (User);
+  rpc ListUsers (ListUsersRequest) returns (ListUsersResponse);
+  rpc UpdateUserStatus (UpdateUserStatusRequest) returns (User);
+  
+  // Message handling
+  rpc SendMessage (SendMessageRequest) returns (Message);
+  rpc GetMessages (GetMessagesRequest) returns (GetMessagesResponse);
+  rpc StreamMessages (StreamMessagesRequest) returns (stream Message);
+  
+  // Meeting management
+  rpc CreateMeeting (CreateMeetingRequest) returns (Meeting);
+  rpc JoinMeeting (JoinMeetingRequest) returns (JoinMeetingResponse);
+  rpc EndMeeting (EndMeetingRequest) returns (EndMeetingResponse);
+  rpc ListMeetings (ListMeetingsRequest) returns (ListMeetingsResponse);
+  
+  // Translation services
+  rpc TranslateText (TranslateTextRequest) returns (TranslateTextResponse);
+  rpc TranslateMessage (TranslateMessageRequest) returns (Message);
+  rpc DetectLanguage (DetectLanguageRequest) returns (DetectLanguageResponse);
+  
+  // Platform integration
+  rpc ConnectPlatform (ConnectPlatformRequest) returns (ConnectPlatformResponse);
+  rpc DisconnectPlatform (DisconnectPlatformRequest) returns (DisconnectPlatformResponse);
+  rpc GetPlatformStatus (GetPlatformStatusRequest) returns (GetPlatformStatusResponse);
+}
+
+// User related messages
+message User {
+  string id = 1;
+  string name = 2;
+  string email = 3;
+  string avatar = 4;
+  string status = 5;
+  string last_seen = 6;
+  string preferred_language = 7;
+  bool auto_translate = 8;
+  repeated PlatformConnection platform_connections = 9;
+}
+
+message UserRequest {
+  string id = 1;
+}
+
+message ListUsersRequest {
+  int32 limit = 1;
+  int32 offset = 2;
+  string filter = 3;
+}
+
+message ListUsersResponse {
+  repeated User users = 1;
+  int32 total_count = 2;
+}
+
+message UpdateUserStatusRequest {
+  string user_id = 1;
+  string status = 2;
+}
+
+// Message related messages
+message Message {
+  string id = 1;
+  string sender_id = 2;
+  string sender_name = 3;
+  string content = 4;
+  string timestamp = 5;
+  string platform = 6;
+  string channel_id = 7;
+  string original_language = 8;
+  map<string, string> translations = 9;
+  repeated Attachment attachments = 10;
+  MessageMetadata metadata = 11;
+}
+
+message Attachment {
+  string id = 1;
+  string type = 2;
+  string url = 3;
+  string name = 4;
+  int32 size = 5;
+  string mime_type = 6;
+}
+
+message MessageMetadata {
+  string platform_message_id = 1;
+  string thread_id = 2;
+  bool is_edited = 3;
+  string edit_timestamp = 4;
+  repeated string mentioned_user_ids = 5;
+  bool is_broadcast = 6;
+}
+
+message SendMessageRequest {
+  string sender_id = 1;
+  string content = 2;
+  string platform = 3;
+  string channel_id = 4;
+  repeated Attachment attachments = 5;
+  MessageMetadata metadata = 6;
+}
+
+message GetMessagesRequest {
+  string channel_id = 1;
+  string platform = 2;
+  int32 limit = 3;
+  string before_timestamp = 4;
+  string after_timestamp = 5;
+  string thread_id = 6;
+}
+
+message GetMessagesResponse {
+  repeated Message messages = 1;
+  bool has_more = 2;
+}
+
+message StreamMessagesRequest {
+  string user_id = 1;
+  repeated string platforms = 2;
+  repeated string channel_ids = 3;
+}
+
+// Meeting related messages
+message Meeting {
+  string id = 1;
+  string title = 2;
+  string description = 3;
+  string start_time = 4;
+  string end_time = 5;
+  string organizer_id = 6;
+  string platform = 7;
+  string platform_meeting_id = 8;
+  string join_url = 9;
+  repeated string participant_ids = 10;
+  MeetingStatus status = 11;
+  MeetingSettings settings = 12;
+}
+
+enum MeetingStatus {
+  SCHEDULED = 0;
+  ACTIVE = 1;
+  ENDED = 2;
+  CANCELLED = 3;
+}
+
+message MeetingSettings {
+  bool auto_record = 1;
+  bool mute_participants_on_entry = 2;
+  bool enable_waiting_room = 3;
+  bool enable_chat = 4;
+  bool enable_screen_sharing = 5;
+  string preferred_language = 6;
+  bool auto_translate = 7;
+}
+
+message CreateMeetingRequest {
+  string title = 1;
+  string description = 2;
+  string start_time = 3;
+  string end_time = 4;
+  string organizer_id = 5;
+  string platform = 6;
+  repeated string participant_ids = 7;
+  MeetingSettings settings = 8;
+}
+
+message JoinMeetingRequest {
+  string meeting_id = 1;
+  string user_id = 2;
+}
+
+message JoinMeetingResponse {
+  string join_url = 1;
+  Meeting meeting = 2;
+}
+
+message EndMeetingRequest {
+  string meeting_id = 1;
+  string user_id = 2;
+}
+
+message EndMeetingResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message ListMeetingsRequest {
+  string user_id = 1;
+  string status = 2;
+  string start_date = 3;
+  string end_date = 4;
+  int32 limit = 5;
+  int32 offset = 6;
+}
+
+message ListMeetingsResponse {
+  repeated Meeting meetings = 1;
+  int32 total_count = 2;
+}
+
+// Translation related messages
+message TranslateTextRequest {
+  string text = 1;
+  string source_language = 2;
+  string target_language = 3;
+}
+
+message TranslateTextResponse {
+  string translated_text = 1;
+  string detected_source_language = 2;
+}
+
+message TranslateMessageRequest {
+  string message_id = 1;
+  string target_language = 2;
+}
+
+message DetectLanguageRequest {
+  string text = 1;
+}
+
+message DetectLanguageResponse {
+  string language = 1;
+  float confidence = 2;
+}
+
+// Platform integration related messages
+message PlatformConnection {
+  string platform = 1;
+  string platform_user_id = 2;
+  string platform_username = 3;
+  string access_token = 4;
+  string refresh_token = 5;
+  string token_expires_at = 6;
+  bool is_connected = 7;
+}
+
+message ConnectPlatformRequest {
+  string user_id = 1;
+  string platform = 2;
+  string auth_code = 3;
+  string redirect_uri = 4;
+}
+
+message ConnectPlatformResponse {
+  bool success = 1;
+  string message = 2;
+  PlatformConnection connection = 3;
+}
+
+message DisconnectPlatformRequest {
+  string user_id = 1;
+  string platform = 2;
+}
+
+message DisconnectPlatformResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message GetPlatformStatusRequest {
+  string user_id = 1;
+  repeated string platforms = 2;
+}
+
+message GetPlatformStatusResponse {
+  repeated PlatformStatus platform_statuses = 1;
+}
+
+message PlatformStatus {
+  string platform = 1;
+  bool is_connected = 2;
+  string status_message = 3;
+  int32 unread_count = 4;
+}
